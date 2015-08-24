@@ -1,0 +1,351 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage{graphicx,type1cm,eso-pic,color,xcolor,microtype,geometry,url}
+\usepackage[utf8x]{inputenc}
+\usepackage{arev}
+\usepackage{booktabs}
+\usepackage{version}
+\usepackage{amsmath}
+%\usepackage{framed}
+
+
+\geometry{hscale=0.85,vscale=0.82}
+\setlength{\parskip}{6pt} \setlength{\parindent}{0pt}
+\setlength{\headheight}{15pt}
+
+\begin{document}
+
+<<results = 'asis',message = FALSE, echo = FALSE>>=
+
+setwd("~/Desktop/IE/IELabs/Marks")
+d <- readRDS('marks15_final.rds')
+g <- readRDS('~/Desktop/IE/IELabs/Groups/sessdb.rds')
+s <- readRDS('~/Desktop/IE/IELabs/sall.rds')
+
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(MASS)
+library(ztable)
+library(xtable)
+library(knitr)
+
+labcols <- paste('Lab.',1:5,sep = '')
+## make long form
+dl <- d %>% dplyr::select(ID, starts_with('Lab') ) %>% gather(session, mark, Lab.1:Lab.5) #%>% head
+dl %>% group_by(session) %>% summarise(ave = mean(mark, na.rm = TRUE)) %>%   ggplot(aes(x = session, y = ave, group = 1)) + geom_line()
+dl %>% ggplot(aes(x = session, y = mark)) + geom_boxplot(fill = 'lightblue') + geom_violin(alpha = 0.5)
+
+## ID group and week
+## lose those who didn't sign up for the first
+s <- filter(s,!is.na(gs1))
+
+gmem <- gather(s,  wk, grp, gs1:gs5) %>% dplyr::select(ID, Course, title, grp,wk) %>% mutate(session = gsub('gs','',wk)) %>% dplyr::select(-wk)
+
+## marks by week including group attended
+mbywk <- merge(gmem,transmute(dl, ID, session = gsub('Lab.','',session),mark), by = c('ID','session'))
+
+all <- g %>% dplyr::select(grp, sat, session = weeks) %>% merge(mbywk,by = c('grp','session'))
+all <- mutate(all, rmark = ifelse(is.na(mark),0,mark))
+all <- all %>% mutate(Gender = ifelse(title == 'Mr', 'M','F')) %>% dplyr::select(-title)
+
+## Look at missed
+dat <- all %>% group_by(ID) %>% summarise(missed = sum(is.na(mark)), ave = mean(mark, na.rm = TRUE))
+
+dat$att <- 5 - dat$missed
+@
+
+<<echo = FALSE, results = 'asis'>>=
+tab <- with(dat,table(cut(ave,breaks=seq(0,100,by = 10)),missed))
+tab <- as.data.frame.matrix(tab)
+ztable(tab,include.rownames = TRUE,type = 'latex', booktabs = TRUE )
+@
+
+
+<<results = 'asis',message = FALSE, echo = FALSE>>=
+ggplot(dat, aes(x = factor(missed), y= ave)) + geom_boxplot()
+ggplot(dat, aes(x = factor(att), y= ave)) + geom_boxplot()
+
+ggplot(dat, aes(x = ave, y = missed)) + geom_point() +geom_smooth(method = 'lm')
+plam <- mean(dat$missed)
+
+dat %>% group_by(missed) %>% summarise(n = n()) %>% ggplot(aes(x = missed, y = n)) + geom_bar(stat = 'identity') + geom_point(aes(y = dpois(0:5,plam) * dim(dat)[1]), colour = 'red', size = 4)
+
+
+## SAC for SD
+
+
+sds <- dat %>% group_by(missed) %>% summarise(n = sum(!is.na(ave)), mean = mean(ave, na.rm = TRUE), sd = sd(ave, na.rm = TRUE)) %>% filter(missed < 5)
+ztable(as.data.frame(sds), include.rownames = FALSE,type = 'latex', booktabs = TRUE )
+## Look at linerar model, poisson model and neg binomial
+dat.df <- filter(dat, is.finite(ave) & ave > 0)
+lm.out <- lm(missed ~ ave ,data=dat.df)
+#summary(lm.out)
+ztable(lm.out, type = 'latex', booktabs = TRUE)
+ztable(aov(lm.out), type = 'latex', booktabs = TRUE)
+
+### semi-log version
+lmdl.out <- lm(missed ~ log(ave) ,data=dat.df)
+#summary(lmdl.out)
+ztable(lmdl.out, type = 'latex', booktabs = TRUE)
+ztable(aov(lm.out), type = 'latex', booktabs = TRUE)
+## implictly the estimates may describe a quadratic
+## for the effort cost function
+### coeff of squared effort (n)
+b <- -5/(2*coef(lm.out)[2])
+a <- 2*b*(coef(lm.out)[1] - 5)
+
+
+#m1 <- glm(missed ~ av,data=dat, family = 'poisson')
+@
+
+Given that there are 5 sessions, the objective function might be
+\begin{displaymath}
+V = \frac{M}{5} \times N - c N^2
+\end{displaymath}
+where $N$ is the number attended and $M$ is the student's average mark per session. $c$ is the cost of attending a session, assumed
+constant and equal for all students.
+
+Maximising gives $N = M/10c$. That means that regressing $N$ against $M$ should give an intercept of zero and
+a slope of $\beta_2  = 1/10c$, from which we can recover $c$ as $1/10 \beta_2$.
+
+The results are shown below:
+
+<<results = 'asis',message = FALSE, echo = FALSE>>=
+ztable(lm.out, type = 'latex', booktabs = TRUE)
+ztable(aov(lm.out), type = 'latex', booktabs = TRUE)
+@
+The t-stat for the intecept is $\Sexpr{coef(summary(lm.out))[1,3]}$ so the model is rejected For what it is worth, the inferred value of $c = \Sexpr{1/10*coef(summary(lm.out))[2,1]}$.
+
+With these figures, the optimal choice for someone with $M = 10$ is to attend $\Sexpr{coef(lm.out)[1] + 10* coef(lm.out)[2]}$, while someone with $M = 100$ would choose to attend $\Sexpr{coef(lm.out)[1] + 100* coef(lm.out)[2]}$. From this we see how poor the model is in explaining the observed range of attendance choices.
+
+For a poisson model
+% Next we fit a Poisson model using a constant elasticity form for the cost function.
+% \begin{displaymath}
+% V = \frac{M}{5} \times N - K N^\gamma
+% \end{displaymath}
+
+<<results = 'asis',message = FALSE, echo = FALSE>>=
+## standard poisson has log link, but linear gives the same failure to prdict anyone missing > 1
+library(AER)
+m1.pois <- glm(missed ~ log(ave),data=dat.df, na.action = na.exclude, family = 'poisson'(link = 'log'))
+#summary(m1.pois)
+disp.test <- dispersiontest(m1.pois, trafo = 1, alternative ='greater')
+## we have overdisperion
+ztable(m1.pois, type = 'latex', booktabs = TRUE)
+
+ztable(with(disp.test, data.frame(z.stat = statistic, alpha = estimate, p.value)), type = 'latex', booktabs = TRUE, digits = 3, caption = 'Overdispersion Test')
+ztable(as.data.frame(with(m1.pois, cbind(res.deviance = deviance, df = df.residual,
+  p = pchisq(deviance, df.residual, lower.tail=FALSE)))), type = 'latex', digits = 3, booktabs = TRUE)
+
+library(sandwich)
+cov.m1 <- vcovHC (m1.pois, type="HC0")
+std.err<-sqrt(diag(cov.m1))
+r.est<-cbind(estimate=m1.pois$coefficients, std.err,
+       pvalue=round(2*(1-pnorm(abs(m1.pois$coefficients/std.err))),5),
+       lower=m1.pois$coefficients-1.96*std.err,
+       upper=m1.pois$coefficients+1.96*std.err)
+
+ztable(r.est,  type = 'latex', booktabs = TRUE)
+
+gof<-cbind(res.deviance=m1.pois$deviance, df=m1.pois$df.residual,
+           p=1-pchisq(m1.pois$deviance, m1.pois$df.residual))
+ztable(as.data.frame(gof), type = 'latex', booktabs = TRUE)
+
+library(msm)
+estmean<-coef(m1.pois)
+var<-cov.m1
+
+## incident rate ratios
+s2<-deltamethod (~ exp(x2), estmean, var)
+
+irr<-cbind(irr=exp(estmean)[2], r.serr=s2,
+           lower=exp(m1.pois$coefficients-1.96*std.err)[2],
+           upper=exp(m1.pois$coefficients+1.96*std.err)[2])
+
+ztable(irr,  type = 'latex', booktabs = TRUE)
+
+pave <-  seq(0,100,by=5)
+df <- dat.df[rep(1,length(pave)),]
+df$ave <- pave
+df <- cbind(df, miss.pred = predict(m1.pois, df, type = 'response'))
+
+# predict(m1,df,type = 'response')
+ggplot(df, aes(x = ave, y = miss.pred)) + geom_line()
+
+
+#### HOW DID WE GET THIS???
+## gamma is the cost elasticity of attendance
+#gamm <- (1+coef(m1)[2])/coef(m1)[2]
+## K is the multiplier for the effort cost
+#K <- exp(1/(gamm-1) - coef(m1)[1])/(5*gamm)
+#x<-seq(0,5,by=.1)
+
+### recover cost function - units are marks given up
+#cost <- function(x,k,gamma) {k*x^gamma}
+#cost.df <- data.frame(n = seq(0,5,by=.1), cost = cost(x,k=K,gamma=gamm))
+
+#ggplot(cost.df, aes(x = n, y = cost)) + geom_line()
+
+
+#cost(5,K,gamm) - cost(4,K,gamm)
+#.3*.2*(cost(5,K,gamm) - cost(4,K,gamm))/12
+
+
+## av = 20
+#lines(x,x*20/5)
+#lines(x,x*50/5)
+## optimal n is beta1 * av^beta2
+#lnstar <- coef(m1)[1] + coef(m1)[2] * log(dat.df$ave)
+#nstar <- exp(lnstar)
+#plot(nstar,dat.df$att)
+
+######
+@
+From UCLA
+
+\[
+ln(\widehat{att_i}) = Intercept + b_1(ave)
+\]
+
+\[ \therefore \]
+
+\[ \widehat{daysabs_i} = e^{Intercept + b_1 ave } = e^{Intercept}e^{b_1 ave} \]
+
+The coefficients have an additive effect in the log y scale and the IRR have a multiplicative effect in the y scale. The dispersion parameter in negative binomial regression does not effect the expected counts, but it does effect the estimated variance of the expected counts. More details can be found in the Modern Applied Statistics with S by W.N. Venables and B.D. Ripley (the book companion of the MASS package).
+
+For additional information on the various metrics in which the results can be presented, and the interpretation of such, please see Regression Models for Categorical Dependent Variables Using Stata, Second Edition by J. Scott Long and Jeremy Freese (2006).
+<<results = 'asis',message = FALSE, echo = FALSE>>=
+## negative binomial
+
+library(car)
+library(msme)
+m.glm <- glm.nb(missed ~ log(ave), data = dat.df)
+df$miss.pred <- predict(m.glm, newdata = df, type = 'response')
+
+filter(df, miss.pred < 5) %>% ggplot( aes(x = ave, y = miss.pred)) + geom_line()
+ztable(m.glm, type = 'latex', booktabs = TRUE)
+
+ztable(as.data.frame(with(m.glm, cbind(res.deviance = deviance, df = df.residual,
+  p = pchisq(deviance, df.residual, lower.tail=FALSE)))), type = 'latex', booktabs = TRUE)
+
+library(sandwich)
+cov.m1 <- vcovHC (m.glm, type="HC0")
+std.err<-sqrt(diag(cov.m1))
+r.est<-cbind(estimate=m.glm$coefficients, std.err,
+       pvalue=round(2*(1-pnorm(abs(m.glm$coefficients/std.err))),5),
+       lower=m.glm$coefficients-1.96*std.err,
+       upper=m.glm$coefficients+1.96*std.err)
+
+ztable(r.est,  type = 'latex', booktabs = TRUE)
+
+gof<-cbind(res.deviance=m.glm$deviance, df=m.glm$df.residual,
+           p=1-pchisq(m.glm$deviance, m.glm$df.residual))
+ztable(as.data.frame(gof), type = 'latex', booktabs = TRUE)
+
+
+## this works but not needed
+m1 <- nbinomial(missed ~ log(ave),  formula2 = ~ 1 + ave, family = "nb2", mean.link = "log",
+  scale.link = "inverse_s", data=dat.df, verbose = FALSE)
+#summary(m1)
+#ml.nbc(att ~ log(ave), data = dat.df)
+#summary(m1)
+
+#m <- nbinomial(missed ~ log(ave),  formula2 = ~ 1, family = "nb2", mean.link = "log",
+#scale.link = "inverse_s", data=dat.df)
+
+library(lmtest)
+## quasi-poisson
+m.qp <- glm(missed ~ log(ave), family = quasipoisson, data = dat.df)
+summary(m.qp)
+## xero inflated
+library(pscl)
+m.zinf <-  zeroinfl(missed ~ log(ave) , dist = 'negbin', data = dat.df)
+summary(m.zinf)
+## hurdle model
+m.hurd <-  hurdle(missed ~ log(ave) | ave, dist = 'negbin', data = dat.df)
+summary(m.hurd)
+m.nb <- glm.nb(missed ~log(ave), data = dat.df)
+m.nb0 <- glm.nb(missed ~log(ave)| 1, data = dat.df)
+ fm <- list("ML-Pois" = m1.pois, "Quasi-Pois" = m.qp, "NB" = m.nb,
+"Hurdle-NB" = m.hurd, "ZINB" = m.zinf)
+ sapply(fm, function(x) coef(x)[1:4])
+ sapply(fm, function(x) logLik(x))
+sapply(fm, function(x) AIC(x))
+ ## we can check on zeros
+
+round(c("Obs" = sum(dat.df$missed < 1),
+"ML-Pois" = sum(dpois(0, fitted(m1.pois))),
+"NB" = sum(dnbinom(0, mu = fitted(m.nb), size = m.nb$theta)),
+"NB-Hurdle" = sum(predict(m.hurd, type = "prob")[,1]),
+"ZINB" = sum(predict(m.zinf, type = "prob")[,1])))
+
+waldtest(m.nb0, m.nb)
+## zero truncated poisson
+library(VGAM)
+mvg.p <- vglm(att ~ log(ave), family = pospoisson(), data = dat.df)
+## this fails
+#mvg.nb <- vglm(att ~ log(ave), family = posnegbinomial(), data = dat.df)
+#summary(mvg)
+#lrtest(m1.pois,m1)
+
+#exp(coef(m1))-1
+
+
+df <- data.frame(ave = seq(0,100,by=5))
+ #predict(m1,df,type = 'response')
+#plot(df$ave,predict(m1,df,type = 'response'))
+
+
+## compoisson
+# library(COMPoissonReg)
+# # load freight data
+# data(freight)
+# # Compute Standard Poisson estimates
+# glm_model <- glm(broken ~ transfers, data=freight, family=poisson, na.action=na.exclude) # beta estimates
+# print("The standard Poisson estimates for the beta vector are")
+# print(coef(glm_model))
+# # Compute COM-Poisson estimates (under constant dispersion model)
+# cmp_model = cmp(formula = broken ~ transfers, data=freight)
+# print("The COM-Poisson estimates for the beta vector are")
+# print(coef(cmp_model))
+# print("The COM-Poisson estimate for the dispersion parameter nu is")
+# print(nu(cmp_model))
+# # Compute associated standard errors for constant COM-Poisson estimates
+# print("The associated standard errors for the betas in the constant dispersion case are")
+# print(sdev(cmp_model))
+# # Perform likelihood ratio test for dispersion parameter
+# # Test for dispersion equal or not equal to 1 (ie performing Poisson vs COM-Poisson regression)
+# freight.chisq <- chisq(cmp_model)
+# freight.pval <- pval(cmp_model)
+# print(sprintf("The likelihood ratio chi-squared test statistic is %0.5f and associated p-value (testing Poisson vs CMP regression) is %0.5f", freight.chisq, freight.pval))
+# # Compute constant COM-Poisson leverage
+# freight.lev <- leverage(cmp_model)
+# print("The leverage of the points is")
+# print(freight.lev)
+# # Compute constant COM-Poisson deviances
+# freight.CMPDev <- deviance(cmp_model)
+# print("The approximate constant dispersion standardized CMP Deviance is")
+# print(freight.CMPDev)
+# # Compute fitted values
+# freight.fitted = predict(cmp_model, newdata=freight)
+# print("The CMP fitted values are")
+# print(freight.fitted)
+# # Compute residual values
+# freight.constantCMPresids <- residuals(cmp_model)
+# print("The CMP residuals are")
+# print(freight.constantCMPresids)
+# # Compute MSE
+# freight.constantCMP.MSE <- mean(freight.constantCMPresids^2)
+# print("The MSE for the constant CMP regression is")
+# print(freight.constantCMP.MSE)
+# # Compute predictions on new data
+# new_data = data.frame(transfers=(0:10))
+# freight.predicted = predict(cmp_model, newdata=new_data)
+# plot(0:10, freight.predicted, type="l", xlab="number of transfers", ylab="predicted number broken")
+# # Compute parametric bootstrap results and use them to generate 0.95 confidence intervals for parameters
+# # Note: n=5 is used here for speed of automated package checking; actual code should use a value such as the default, n=1000
+# freight.CMPParamBoot <- parametric_bootstrap(cmp_model, n=5)
+# print(apply(freight.CMPParamBoot,2,quantile,c(0.025,0.975)))
+@
+
+\end{document}
