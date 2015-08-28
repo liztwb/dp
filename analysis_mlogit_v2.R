@@ -11,7 +11,6 @@ pgumbel <- function(q,loc,scale){ # CDF
   exp(-exp(-((q - loc)/scale)))
 }
 
-
 labcols <- paste('Lab.',1:5,sep = '')
 ## make long form
 dl <- d %>% dplyr::select(ID, starts_with('Lab') ) %>% gather(session, mark, Lab.1:Lab.5) #%>% head
@@ -61,7 +60,9 @@ summary.myopt <- function(ob) {
 
 
 dat.dp <- dplyr::filter(all, is.finite(ave)) %>% mutate(ave = ave +1)
+## attndance rises and then falls sharply
 
+dat.dp %>% group_by(session) %>% summarise(matt = mean(att)) %>% ggplot(aes(x = session, y = matt)) + geom_line()
 
 ##exponentiial;
 m <- .5
