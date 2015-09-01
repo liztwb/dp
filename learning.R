@@ -64,7 +64,7 @@ pAtt <- function(stage, m, theta){
 }
 
 pAtt(5, 0,0.25)
-sapply(1:5, pAtt,20, 0.25)
+sapply(1:5, pAtt,80, 0.25)
 plot(1:5, sapply(1:5, pAtt, 50, 0.25))
 plot(0:20,EV4(0:20,0.25), type = 'l', col = 'pink', lwd=5, ylim = c(4,10))
 lines(0:20,EV5(0:20,0.25), type = 'l', col = 'lightblue', lwd=5)
