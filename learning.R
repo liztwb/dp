@@ -48,27 +48,105 @@ EV1 <- function(m, theta){
   return(EV)
 }
 
-EV1(0, 0.25)
-plot(0:100,EV1(0:100,0.25), type = 'l')
+EV1(0, theta)
+plot(0:100,EV1(0:100,theta), type = 'l')
 #
 
-pAtt <- function(stage, m, theta){
+pAtt <- function(stage, m, theta, delta = 5){
   stage <- as.character(stage)
   ms <- 0.2*m
   switch(stage, 
          '5' =  pexp(ms, theta),
-         '4' = pexp(ms+EV5(m+5, theta) - EV5(m,theta), theta),
-         '3' = pexp(ms+EV4(m+5, theta) - EV4(m,theta), theta),
-         '2' = pexp(ms+EV3(m+5, theta) - EV3(m,theta), theta),
-         '1' = pexp(ms+EV2(m+5, theta) - EV2(m,theta), theta))
+         '4' = pexp(ms+EV5(m+delta, theta) - EV5(m,theta), theta),
+         '3' = pexp(ms+EV4(m+delta, theta) - EV4(m,theta), theta),
+         '2' = pexp(ms+EV3(m+delta, theta) - EV3(m,theta), theta),
+         '1' = pexp(ms+EV2(m+delta, theta) - EV2(m,theta), theta))
 }
 
-pAtt(5, 0,0.25)
-sapply(1:5, pAtt,80, 0.25)
-plot(1:5, sapply(1:5, pAtt, 50, 0.25))
-plot(0:20,EV4(0:20,0.25), type = 'l', col = 'pink', lwd=5, ylim = c(4,10))
-lines(0:20,EV5(0:20,0.25), type = 'l', col = 'lightblue', lwd=5)
+pAtt(5, 0,theta)
+sapply(1:5, pAtt,80, theta)
+plot(1:5, sapply(1:5, pAtt, 50, theta))
+plot(0:20,EV4(0:20,theta), type = 'l', col = 'pink', lwd=5, ylim = c(4,10))
+lines(0:20,EV5(0:20,theta), type = 'l', col = 'lightblue', lwd=5)
 
+
+## DGP
+delt <- 5
+simMarks <- function(mark=50, theta = 0.25, delta = delt){
+#theta <- 0.25
+m <- mark
+#m <- c(10,90)
+ms <- 0.2*m
+#stage 1
+z <- rexp(m,theta)
+att1 <- (z < ms+EV2(m+delta, theta) - EV2(m,theta))
+m <- m + att1*delta
+ms <- 0.2*m
+##stage 2
+z <- rexp(m,theta)
+att2 <- (z < ms+EV3(m+delta, theta) - EV3(m,theta))
+m <- m + att2*delta
+ms <- 0.2*m
+##stage 3
+z <- rexp(m,theta)
+att3 <- (z < ms+EV4(m+delta, theta) - EV4(m,theta))
+m <- m + att3*delta
+ms <- 0.2*m
+##stage 4
+z <- rexp(m,theta)
+att4 <- (z < ms+EV5(m+delta, theta) - EV5(m,theta))
+m <- m + att4*delta
+ms <- 0.2*m
+##stage 5
+z <- rexp(m,theta)
+att5 <- (z < ms)
+return(cbind(att1, att2, att3, att4, att5))
+}
+
+simMarks(mark = c(10,50, 100), delta = delt, theta = theta)
+set.seed(23)
+mks <- c(sample(1:50,100, replace = TRUE), sample(50:70,200, replace = TRUE), 
+         sample(71:80,200, replace = TRUE))
+choices <- simMarks(mks, delta = delt, theta = theta)
+mode(choices) <- 'numeric'
+df <- data.frame(mks, choices)
+
+
+ndf <- cbind(df, mks+delt*t(apply(df[,2:5],1,cumsum)))
+mp <- ndf[,c(1,7:10)]
+names(mp) <- paste0('m', 1:5)
+dat <- cbind(mp, choices)
+
+
+
+NLL <- function(theta, data){
+  choices <- data[,c('att1', 'att2','att3','att4','att5')]
+  mks <- data[,c('m1', 'm2','m3','m4','m5')]
+  probs <- sapply(1:5, function(x) pAtt(x, mks[,x], theta = theta))
+  -sum(log(choices*probs + (1-choices)*(1-probs)))
+}
+
+NLL(0.23, dat)
+
+(result <- optim(0.8, NLL,  data = dat,  hessian = TRUE, method = 'BFGS'))
+sqrt(1/result$hessian)
+plot(x <- seq(0.1,0.35,by = 0.001), sapply(x, NLL, dat), type = 'l', lwd =4)
+
+
+
+
+
+
+library(parallel)
+cl <- makeCluster(detectCores()-1)  
+#get library support needed to run the code
+#clusterEvalQ(cl,library(repsych))
+#put objects in place that might be needed for the code
+#clusterExport(cl,c("myData"))
+#... then parallel replicate...
+parSapply(cl, 1:10000, function(i,...) { x <- rnorm(10); mean(x)/sd(x) } )
+#stop the cluster
+stopCluster(cl)
 
 
 ## updating priors
